@@ -1,13 +1,13 @@
 #
-# Macro file for "TestDEDX2" (dE/dX: e- in G4_Al, emstandard_opt0)
+# Macro file for "TestDEDX2" (dE/dX: e- in G4_WATER, emlivermore)
 #
 /control/verbose 0
 /run/verbose 0
 #
-/testem/phys/addPhysics emstandard_opt0
+/testem/phys/addPhysics emlivermore
 /run/initialize
 #
-/testem/det/setMat G4_Al
+/testem/det/setMat G4_WATER
 #
 /gun/particle e-
 /gun/energy 10 MeV

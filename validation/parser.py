@@ -1,75 +1,86 @@
-"""Turns the output of one validation run into plots for the Geant Validation Portal.
+#!/usr/bin/env python
 
-The CI imports this file and calls two functions, once for every macro listed in
-validation/config.json:
+# TestDEDX2 portal parser: metadata() reads the macro, parse() the per-run .dat
+# tables. This application does not simulate particle transport: it computes
+# dE/dX analytically with G4EmCalculator (and G4ESTARStopping for electrons) in
+# RunAction::BeginOfRunAction, over a fixed 242-bin log scan from 1 keV to
+# ~1 TeV. /run/beamOn only needs to trigger a Run; the event count is otherwise
+# irrelevant to the output.
+import os
 
-1. metadata(commands)  BEFORE the simulation: describe the run from its macro.
-2. parse(job)          AFTER the simulation: read the output files, return plots.
+from geantval import getJSON, one_command, single_run
 
-You only have to edit the lines marked TODO. Example with macro/example.mac:
+PHYSLISTS = {"emstandard_opt0", "emstandard_opt2", "emstandard_opt3",
+             "empenelope", "emlivermore", "pai", "pai_photon"}
 
-    commands = [("/myapp/phys/addPhysics", "FTFP_BERT"), ("/run/initialize", ""),
-                ("/gun/particle", "proton"), ("/gun/energy", "100 MeV"), ...]
-
-    metadata(commands) -> {"TEST": "MyTest", "PHYSICS_LIST": "FTFP_BERT",
-                           "PARTICLE": "proton", "ENERGY": 100.0}
-
-    job = that dict + {"path": "<directory of the run>", "VERSION": "11.3.2"}
-    parse(job) -> one plot per `yield`
-
-The run directory contains the files your application wrote with relative names
-(here result.txt) and the captured standard output (test_stdout.txt).
-
-Helpers from ci-workflows/validation/geantval.py:
-- one_command(commands, "/cmd"): value of a command that appears exactly once
-  (error if missing or repeated, so the metadata always matches the macro);
-- energy_mev("100 MeV"): energy in MeV;
-- getJSON(job, ...): builds one plot in the portal format (see parse below).
-"""
-from pathlib import Path
-
-from geantval import energy_mev, getJSON, one_command
+# Suffix of the .dat file -> human-readable production cut used to compute it.
+# cut100kev and cutE0 are written for every particle; cut1km only for e-, and
+# only meaningful if the macro set /testem/phys/setCuts 1 km (an unrestricted,
+# "total" stopping power comparable to the ESTAR table).
+CUT_FILES = {"cut100kev": "100 keV", "cutE0": "E0", "cut1km": "1 km"}
 
 
-def metadata(commands):
-    """Describe one run, reading every setting from its macro.
+def extract_table(filename):
+    x, y = [], []
+    with open(filename) as myfile:
+        next(myfile)  # header: "numBin Emin Emax", not needed here
+        for line in myfile:
+            fields = line.split()
+            if len(fields) != 2:
+                raise ValueError("Expected energy/dE-dX columns: " + line)
+            x.append(float(fields[0]))
+            y.append(float(fields[1]))
+    if not x:
+        raise ValueError("Empty dE/dX table: " + filename)
+    return x, y
 
-    The returned dict must contain "TEST" (the test name shown on the portal);
-    add whatever parse() needs. Raise an error if the macro is not suitable.
-    """
-    return {
-        "TEST": "MyTest",  # TODO: your test name
-        "PHYSICS_LIST": one_command(commands, "/myapp/phys/addPhysics"),  # TODO: your command
-        "PARTICLE": one_command(commands, "/gun/particle"),
-        "ENERGY": energy_mev(one_command(commands, "/gun/energy")),
-    }
+
+def plot(job, target, model, suffix, cut_label):
+    filepath = os.path.join(job["path"], "%s_%s_%s.dat" % (job["PARTICLE"], job["MATERIAL"], suffix))
+    if not os.path.exists(filepath):
+        return None
+    xvalues, yvalues = extract_table(filepath)
+    return getJSON(job, "chart",
+                   mctool_name="GEANT4",
+                   mctool_model=model,
+                   observableName="dE/dX",
+                   targetName=target,
+                   beamParticle=job["PARTICLE"],
+                   beamEnergies=xvalues[:3],
+                   secondaryParticle="None",
+                   title="dE/dX",
+                   xAxisName="E, MeV",
+                   yAxisName="dE/dX, MeV cm2/g",
+                   xValues=xvalues,
+                   yValues=yvalues,
+                   parameters=[{"names": "CUT", "values": cut_label}])
 
 
 def parse(job):
-    """Read the output of the run in job["path"] and yield one plot per `yield`."""
-    # TODO: read your output file. This example expects two columns, x and y,
-    # one point per line; lines starting with # are comments.
-    x, y = [], []
-    for line in (Path(job["path"]) / "result.txt").read_text().splitlines():
-        if line.strip() and not line.startswith("#"):
-            x_value, y_value = line.split()
-            x.append(float(x_value))
-            y.append(float(y_value))
+    target = job["MATERIAL"].removeprefix("G4_")
+    found = False
+    for suffix, cut_label in CUT_FILES.items():
+        record = plot(job, target, job["PHYSLIST"], suffix, cut_label)
+        if record is not None:
+            found = True
+            yield record
 
-    # "chart" is a set of points (x, y). For a histogram use "histogram" with
-    # binEdgeLow, binEdgeHigh and binContent instead of xValues and yValues.
-    # Optional uncertainties: yStatErrorsPlus/Minus, ySysErrorsPlus/Minus.
-    yield getJSON(
-        job, "chart",
-        mctool_name="GEANT4",
-        mctool_model=job["PHYSICS_LIST"],
-        observableName="TODO observable",  # e.g. "attenuation coefficient"
-        targetName="TODO target",          # e.g. "water"
-        beamParticle=job["PARTICLE"],
-        beamEnergies=[job["ENERGY"]],      # MeV
-        title="TODO title",
-        xAxisName="TODO x, unit",
-        yAxisName="TODO y, unit",
-        xValues=x,
-        yValues=y,
-    )
+    if job["PARTICLE"] == "e-":
+        record = plot(job, target, "ESTAR", "ESTAR", "1 km")
+        if record is not None:
+            found = True
+            yield record
+
+    if not found:
+        raise ValueError("No dE/dX tables found for %s in %s" % (job["PARTICLE"], job["MATERIAL"]))
+
+
+def metadata(commands):
+    single_run(commands)
+    physlist = one_command(commands, "/testem/phys/addPhysics")
+    if physlist not in PHYSLISTS:
+        raise ValueError("Unsupported physics list for this validation: " + physlist)
+    return {"TEST": "TestDEDX2",
+            "PHYSLIST": physlist,
+            "MATERIAL": one_command(commands, "/testem/det/setMat"),
+            "PARTICLE": one_command(commands, "/gun/particle")}

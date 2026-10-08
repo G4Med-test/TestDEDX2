@@ -1,5 +1,5 @@
 #
-# Macro file for "TestDEDX2" (dE/dX: e- in G4_Al, emstandard_opt0)
+# Macro file for "TestDEDX2" (dE/dX: e- in G4_Au, emstandard_opt0)
 #
 /control/verbose 0
 /run/verbose 0
@@ -7,7 +7,7 @@
 /testem/phys/addPhysics emstandard_opt0
 /run/initialize
 #
-/testem/det/setMat G4_Al
+/testem/det/setMat G4_Au
 #
 /gun/particle e-
 /gun/energy 10 MeV
