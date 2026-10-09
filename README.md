@@ -5,8 +5,6 @@ across Geant4's EM physics lists**, including comparison against NIST ESTAR
 stopping-power tables for electrons. Author: A. Bagulya; based on the `TestEm0`
 example.
 
-[![CI Pipeline](https://github.com/G4Med-test/TestDEDX2/actions/workflows/ci.yml/badge.svg)](https://github.com/G4Med-test/TestDEDX2/actions/workflows/ci.yml)
-
 ---
 
 ## 🔬 What this test does
